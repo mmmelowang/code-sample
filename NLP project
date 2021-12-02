@@ -1,0 +1,129 @@
+# install datasets
+!pip install datasets
+
+# Import libraries
+from datasets import list_datasets, list_metrics, load_dataset, load_metric
+# from pprint import pprint
+import pandas as pd
+import pickle
+import pandas as pd
+import os
+import nltk
+from nltk.corpus import stopwords
+from nltk.stem import WordNetLemmatizer
+import gensim
+import gensim.corpora as corpora
+from gensim.models.coherencemodel import CoherenceModel
+from gensim.corpora.dictionary import Dictionary
+import matplotlib.pyplot as plt
+from gensim.models import Phrases
+from gensim.models.phrases import Phraser
+import numpy as np
+from kneed import KneeLocator
+
+import nltk
+nltk.download('stopwords')
+from nltk.corpus import stopwords
+
+# Downloading and loading a dataset- 1% sample
+# https://huggingface.co/docs/datasets/splits.html
+dataset = load_dataset('amazon_us_reviews', 'Digital_Ebook_Purchase_v1_01', split='train[:1%]')
+
+dataset.shape
+
+data = pd.DataFrame(dataset)
+
+# Flag reviews by sentiment
+def review_sentiment(df):
+    if df['star_rating'] >= 4:
+        return 'positive'
+    elif df['star_rating'] == 3:
+        return 'neutral'
+    elif df['star_rating'] <= 2:
+        return 'neutral'
+
+data['review_category'] = data.apply(review_sentiment, axis = 1)
+
+# Cleaning text, removing stopwords, stemming words
+
+def clean_text(txt_in):
+    import re
+    clean = re.sub('[^A-Za-z0-9]+', " ", txt_in).lower().strip()
+    return clean
+
+def rem_sw(var):
+    from nltk.corpus import stopwords
+    sw = set(stopwords.words('english'))
+    my_test = [word for word in var.split() if word not in sw]
+    my_test = ' '.join(my_test)
+    return my_test
+
+def stem_fun(var):
+    from nltk.stem.porter import PorterStemmer
+    stemmer = PorterStemmer()
+    tmp_txt = [stemmer.stem(word) for word in var.split()]
+    tmp_txt = ' '.join(tmp_txt)
+    return tmp_txt
+
+data.columns
+
+data['review_body_clean'] = data['review_body'].apply(clean_text).apply(rem_sw).apply(stem_fun).str.split()
+
+! pip install kneed
+
+# LDA using bigrams, test with 5 topics 
+def fetch_bi_grams(var):
+    sentence_stream = np.array(var)
+    bigram = Phrases(sentence_stream, min_count=5, threshold=10) #delimiter=",")
+    trigram = Phrases(bigram[sentence_stream], min_count=5, threshold=10)
+    bigram_phraser = Phraser(bigram)
+    trigram_phraser = Phraser(trigram)
+    bi_grams = list()
+    tri_grams = list()
+    for sent in sentence_stream:
+        bi_grams.append(bigram_phraser[sent])
+        tri_grams.append(trigram_phraser[sent])
+    return bi_grams, tri_grams
+
+bi, tri = fetch_bi_grams(data.review_body_clean)
+the_data = bi
+dictionary = Dictionary(the_data)
+id2word = corpora.Dictionary(the_data)
+    
+corpus = [id2word.doc2bow(text) for text in the_data]
+    
+n_topics = 5
+ldamodel = gensim.models.ldamodel.LdaModel(
+        corpus, num_topics=n_topics, id2word=id2word, iterations=50, passes=15,
+        random_state=123)
+ldamodel.save('model5.gensim')
+topics = ldamodel.print_topics(num_words=4)
+for topic in topics:
+    print(topic)
+        
+    #compute Coherence Score using c_v
+coherence_model_lda = CoherenceModel(model=ldamodel, texts=the_data,
+                                         dictionary=dictionary, coherence='c_v')
+coherence_lda = coherence_model_lda.get_coherence()
+print('\nCoherence Score: ', coherence_lda)
+    
+c_scores = list()
+for word in range(1, 5):
+    ldamodel = gensim.models.ldamodel.LdaModel(
+            corpus, num_topics=word, id2word=id2word, iterations=10, passes=5,
+            random_state=123)
+    coherence_model_lda = CoherenceModel(model=ldamodel, texts=the_data,
+                                              dictionary=dictionary,
+                                              coherence='c_v')
+    c_scores.append(coherence_model_lda.get_coherence())
+    
+x = range(1, 5)
+kn = KneeLocator(x, c_scores,
+                     curve='concave', direction='increasing')
+opt_topics = kn.knee
+print ("Optimal topics is", kn)
+plt.plot(x, c_scores)
+plt.xlabel("Num Topics")
+plt.ylabel("Coherence score")
+plt.legend(("coherence_values"), loc='best')
+plt.show()
